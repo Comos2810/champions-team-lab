@@ -107,7 +107,10 @@
     if (!sp) return el;
     $('.fill', el).onclick = () => { fillCommon(set); saveTeam(); renderSlots(); render(); };
     $('.ability', el).onchange = e => { set.ability = e.target.value; upd(); };
-    $('.item', el).onchange = e => { set.item = e.target.value; upd(); };
+    $('.item', el).onchange = e => {
+      const was = set.species; set.item = e.target.value; syncMega(set);
+      if (set.species !== was) { saveTeam(); renderSlots(); render(); } else upd();
+    };
     $('.nature', el).onchange = e => { set.nature = e.target.value; upd(); };
     el.querySelectorAll('.sp input').forEach(inp => inp.onchange = e => {
       set.sp[+e.target.dataset.k] = Math.max(0, Math.min(MAX_STAT_SP, +e.target.value || 0)); e.target.value = set.sp[+e.target.dataset.k]; upd();
@@ -156,6 +159,26 @@
     const id = toId(set.species);
     if (!D.species[id]) return;
     Object.assign(set, commonSet(id));
+    syncMega(set);
+  }
+  /** Base species id of a form (Charizard-Mega-Y -> charizard). */
+  const baseId = id => D.species[id] ? toId(D.species[id].base || D.species[id].n) : id;
+  /**
+   * Holding its Mega Stone means the Pokémon battles as the Mega: switch the slot to the Mega form (its stats,
+   * typing and ability). Taking the stone away switches back to the base form.
+   */
+  function syncMega(set) {
+    const id = toId(set.species);
+    if (!D.species[id]) return;
+    const base = baseId(id);
+    const mega = Object.keys(D.species).find(k => D.species[k].ri && toId(D.species[k].ri) === toId(set.item) && baseId(k) === base);
+    if (mega && mega !== id) {
+      if (!set.baseAbility && !D.species[id].ri) set.baseAbility = set.ability;
+      set.species = D.species[mega].n; set.ability = D.species[mega].ab[0];
+    } else if (!mega && D.species[id].ri) {
+      set.species = D.species[base].n;
+      set.ability = set.baseAbility || D.species[base].ab[0];
+    }
   }
 
   // ------------------------------------------------------------------ paste import / export
@@ -191,13 +214,16 @@
         } else if ((m = l.match(/^(\w+)\s+Nature/i))) set.nature = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
         else if ((m = l.match(/^[-–]\s*(.+)/)) && mi < 4) set.moves[mi++] = toId(m[1]);
       }
-      if (D.species[toId(set.species)]) out.push(set);
+      if (D.species[toId(set.species)]) { syncMega(set); out.push(set); }
     }
     return out;
   }
   function exportPaste() {
     return filled().map(s => {
-      const lines = [`${s.species}${s.item ? ' @ ' + s.item : ''}`, `Ability: ${s.ability}`, 'Level: 50'];
+      const sp = D.species[toId(s.species)];
+      const name = sp && sp.ri ? D.species[baseId(toId(s.species))].n : s.species;
+      const ability = sp && sp.ri ? (s.baseAbility || (sp.ab.some(a => toId(a) === toId(s.ability)) ? D.species[baseId(toId(s.species))].ab[0] : s.ability)) : s.ability;
+      const lines = [`${name}${s.item ? ' @ ' + s.item : ''}`, `Ability: ${ability}`, 'Level: 50'];
       const evs = s.sp.map((v, k) => v ? `${v} ${STAT_LABEL[k]}` : null).filter(Boolean).join(' / ');
       if (evs) lines.push(`EVs: ${evs}`);
       lines.push(`${s.nature} Nature`);
