@@ -48,31 +48,38 @@
   /** Type-to-filter suggestions under an input; picking one sets the value and fires 'change'. */
   function autocomplete(input, options) {
     const norm = x => x.toLowerCase().replace(/[^a-z0-9]/g, '');
-    let box = null, items = [], sel = -1;
-    const close = () => { box?.remove(); box = null; sel = -1; };
+    let box = null, items = [], sel = -1, typed = false, inBox = false;
+    const close = () => { box?.remove(); box = null; sel = -1; inBox = false; };
+    document.addEventListener('pointerdown', e => { if (box && !box.contains(e.target) && e.target !== input) close(); }, { passive: true });
     const pick = val => { input.value = val; close(); input.dispatchEvent(new Event('change')); };
     const open = () => {
-      const q = norm(input.value);
+      // tapping a box shows the whole list to scroll; typing filters it
+      const q = typed ? norm(input.value) : '';
       const opts = typeof options === 'function' ? options() : options;
-      items = (q ? [...opts.filter(o => norm(o).startsWith(q)), ...opts.filter(o => !norm(o).startsWith(q) && norm(o).includes(q))] : opts).slice(0, 8);
+      items = (q ? [...opts.filter(o => norm(o).startsWith(q)), ...opts.filter(o => !norm(o).startsWith(q) && norm(o).includes(q))] : opts).slice(0, 500);
       close();
-      if (!items.length || (items.length === 1 && items[0] === input.value)) return;
+      if (!items.length || (typed && items.length === 1 && items[0] === input.value)) return;
       box = document.createElement('div');
       box.className = 'ac';
       items.forEach((o, i) => {
         const d = document.createElement('div');
         d.textContent = o;
-        d.onpointerdown = e => { e.preventDefault(); pick(o); };
+        if (o === input.value) d.classList.add('cur');
+        d.onclick = () => pick(o);   // click, not pointerdown: a swipe to scroll the list must not pick
         box.append(d);
       });
       const r = input.getBoundingClientRect();
       Object.assign(box.style, { left: r.left + scrollX + 'px', top: r.bottom + scrollY + 2 + 'px', minWidth: Math.max(r.width, 160) + 'px' });
+      // keep the list open while it's being touched/scrolled; close on a tap anywhere else
+      box.addEventListener('mousedown', e => e.preventDefault());
+      box.addEventListener('pointerdown', () => { inBox = true; }, { passive: true });
       document.body.append(box);
+      const cur = box.querySelector('.cur'); if (cur) cur.scrollIntoView({ block: 'nearest' });
     };
     input.setAttribute('autocomplete', 'off');
-    input.addEventListener('input', open);
-    input.addEventListener('focus', () => { if (input.value === '') open(); });
-    input.addEventListener('blur', () => setTimeout(close, 150));
+    input.addEventListener('input', () => { typed = true; open(); });
+    input.addEventListener('focus', () => { typed = false; open(); });
+    input.addEventListener('blur', () => setTimeout(() => { if (!inBox) close(); }, 150));
     input.addEventListener('keydown', e => {
       if (!box) return;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -141,7 +148,9 @@
     autocomplete($('.species', el), AC.species);
     if (sp) {
       autocomplete($('.item', el), AC.items);
-      const pool = (sp.mp || Object.keys(D.moves)).map(m => D.moves[m]).filter(Boolean).map(m => m.n).sort();
+      // the moves this Pokémon can learn (a Mega uses its base form's list)
+      const learn = sp.mp || D.species[toId(sp.base)]?.mp || Object.keys(D.moves);
+      const pool = learn.map(m => D.moves[m]).filter(Boolean).map(m => m.n).sort();
       el.querySelectorAll('.move').forEach(inp => autocomplete(inp, pool));
     }
     $('.species', el).onchange = e => {
