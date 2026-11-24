@@ -39,12 +39,49 @@
     render();
   }
 
+  // Suggestion lists. Not <datalist>: on phones it opens a full-screen picker that hides the keyboard.
+  const AC = { species: [], items: [] };
   function buildDatalists() {
-    document.querySelectorAll('datalist').forEach(d => d.remove());
-    const names = Object.values(D.species).map(s => s.n).sort();
-    const items = Object.values(D.items).sort();
-    document.body.append(h(`<datalist id="dl-species">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>`));
-    document.body.append(h(`<datalist id="dl-items">${items.map(n => `<option value="${esc(n)}">`).join('')}</datalist>`));
+    AC.species = Object.values(D.species).map(s => s.n).sort();
+    AC.items = Object.values(D.items).sort();
+  }
+  /** Type-to-filter suggestions under an input; picking one sets the value and fires 'change'. */
+  function autocomplete(input, options) {
+    const norm = x => x.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let box = null, items = [], sel = -1;
+    const close = () => { box?.remove(); box = null; sel = -1; };
+    const pick = val => { input.value = val; close(); input.dispatchEvent(new Event('change')); };
+    const open = () => {
+      const q = norm(input.value);
+      const opts = typeof options === 'function' ? options() : options;
+      items = (q ? [...opts.filter(o => norm(o).startsWith(q)), ...opts.filter(o => !norm(o).startsWith(q) && norm(o).includes(q))] : opts).slice(0, 8);
+      close();
+      if (!items.length || (items.length === 1 && items[0] === input.value)) return;
+      box = document.createElement('div');
+      box.className = 'ac';
+      items.forEach((o, i) => {
+        const d = document.createElement('div');
+        d.textContent = o;
+        d.onpointerdown = e => { e.preventDefault(); pick(o); };
+        box.append(d);
+      });
+      const r = input.getBoundingClientRect();
+      Object.assign(box.style, { left: r.left + scrollX + 'px', top: r.bottom + scrollY + 2 + 'px', minWidth: Math.max(r.width, 160) + 'px' });
+      document.body.append(box);
+    };
+    input.setAttribute('autocomplete', 'off');
+    input.addEventListener('input', open);
+    input.addEventListener('focus', () => { if (input.value === '') open(); });
+    input.addEventListener('blur', () => setTimeout(close, 150));
+    input.addEventListener('keydown', e => {
+      if (!box) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        [...box.children].forEach((c, i) => c.classList.toggle('on', i === sel));
+      } else if (e.key === 'Enter') { e.preventDefault(); pick(items[Math.max(0, sel)]); }
+      else if (e.key === 'Escape') close();
+    });
   }
 
   // ------------------------------------------------------------------ team state
@@ -83,13 +120,13 @@
   function slotCard(set, i) {
     const sp = D.species[toId(set.species)];
     const el = h(`<div class="slot">
-      <div class="row"><input class="species" list="dl-species" placeholder="Pokémon ${i + 1}" value="${esc(set.species)}">
+      <div class="row"><input class="species" placeholder="Pokémon ${i + 1}" value="${esc(set.species)}">
         <span class="types">${sp ? sp.t.map(typeChip).join('') : ''}</span>
         ${sp ? `<button class="small fill" title="Fill item, ability, spread and moves with the most common set">Common set</button>` : ''}</div>
       ${sp ? `
       <div class="row">
         <select class="ability">${sp.ab.map(a => `<option ${toId(a) === toId(set.ability) ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
-        <input class="item" list="dl-items" placeholder="Item" value="${esc(set.item)}" style="flex:1;min-width:90px">
+        <input class="item" placeholder="Item" value="${esc(set.item)}" style="flex:1;min-width:90px">
         <select class="nature">${Object.keys(Calc.NATURES).map(n => `<option ${n === set.nature ? 'selected' : ''}>${n}</option>`).join('')}</select>
       </div>
       <div class="sp">${STAT_LABEL.map((l, k) => `<label>${l}<input type="number" min="0" max="32" value="${set.sp[k] || 0}" data-k="${k}"><span class="stat"></span></label>`).join('')}</div>
@@ -98,10 +135,15 @@
         <span class="muted">Stages</span>${[1, 2, 3, 4, 5].map(k => `<label>${STAT_LABEL[k]}<select data-b="${k}">${[6, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -5, -6].map(v => `<option value="${v}" ${(set.boosts?.[k] || 0) === v ? 'selected' : ''}>${v > 0 ? '+' + v : v}</option>`).join('')}</select></label>`).join('')}
         <button class="small ghost reset-b" title="Reset all stages to 0">0</button>
       </div>
-      <div class="moves">${[0, 1, 2, 3].map(k => `<input class="move" data-k="${k}" list="dl-moves-${i}" placeholder="Move ${k + 1}" value="${esc(moveName(set.moves[k]))}">`).join('')}</div>
-      <datalist id="dl-moves-${i}">${(sp.mp || Object.keys(D.moves)).map(m => D.moves[m]).filter(Boolean).map(m => `<option value="${esc(m.n)}">`).join('')}</datalist>` : ''}
+      <div class="moves">${[0, 1, 2, 3].map(k => `<input class="move" data-k="${k}" placeholder="Move ${k + 1}" value="${esc(moveName(set.moves[k]))}">`).join('')}</div>` : ''}
     </div>`);
     const upd = () => { saveTeam(); updateStats(el, set); render(); };
+    autocomplete($('.species', el), AC.species);
+    if (sp) {
+      autocomplete($('.item', el), AC.items);
+      const pool = (sp.mp || Object.keys(D.moves)).map(m => D.moves[m]).filter(Boolean).map(m => m.n).sort();
+      el.querySelectorAll('.move').forEach(inp => autocomplete(inp, pool));
+    }
     $('.species', el).onchange = e => {
       const id = toId(e.target.value);
       Object.assign(set, emptySet(), { species: D.species[id] ? D.species[id].n : e.target.value });
@@ -741,7 +783,8 @@
   function viewBring(v, list) {
     v.innerHTML = `<p class="muted">Enter their six (as seen at team preview). Each opponent uses its most common set. The score of your Pokémon
       against theirs compares how fast each side KOs the other and who moves first. The suggested four cover their six best.</p>
-      <div class="controls">${bringState.opp.map((o, i) => `<input list="dl-species" data-i="${i}" placeholder="Their #${i + 1}" value="${esc(o)}" style="width:140px">`).join('')}</div><div id="bringOut"></div>`;
+      <div class="controls">${bringState.opp.map((o, i) => `<input data-i="${i}" placeholder="Their #${i + 1}" value="${esc(o)}" style="width:140px">`).join('')}</div><div id="bringOut"></div>`;
+    v.querySelectorAll('[data-i]').forEach(inp => autocomplete(inp, AC.species));
     v.querySelectorAll('[data-i]').forEach(inp => inp.onchange = e => { bringState.opp[+e.target.dataset.i] = e.target.value; render(); });
     const opp = bringState.opp.map(n => toId(n)).filter(id => D.species[id]).map(id => {
       const { set, megaId } = metaSet(id);
