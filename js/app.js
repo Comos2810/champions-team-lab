@@ -782,13 +782,13 @@
   /**
    * Is the TEAM built around Trick Room? Judged from the team, not from base Speed alone (a base-100 Gardevoir or a
    * base-80 attacker can be a Trick Room attacker): a member "plays under Trick Room" when its spread says so
-   * (-Spe nature, or 0 Speed SP without a +Spe nature) or it is very slow (base Spe <= 50). With a Trick Room setter and
+   * (-Spe nature, or 0 Speed SP without a +Spe nature) or it is very slow (base Spe <= 60). With a Trick Room setter and
    * at least two such members besides the setter it's a TR team; if the team also has Tailwind it's Tailroom, where
    * only those members play under Trick Room. A lone Trick Room user on a fast team (reverse TR) isn't a TR team.
    */
   function trMember(m) {
     const n = Calc.NATURES[m.nature] || [];
-    return n[1] === 5 || (m.sp[5] === 0 && n[0] !== 5 && m.item !== 'choicescarf') || m.s.bs[5] <= 50;
+    return n[1] === 5 || (m.sp[5] === 0 && n[0] !== 5 && m.item !== 'choicescarf') || m.s.bs[5] <= 60;
   }
   function teamPlan() {
     const ms = mons();
