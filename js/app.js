@@ -855,10 +855,72 @@
   }
 
   // ------------------------------------------------------------------ bring 4
+  /* Support value of a group of our Pokémon against their six (in "Pokémon worth" units, comparable to one 1-on-1
+   * win = +1). Speed control counts the our-vs-their speed pairs it flips; only the best speed-control option counts
+   * (a team runs one plan a game). */
+  function supportModel(opp) {
+    const oppMoves = x => {
+      const mu = x.moveUse; const ids = Object.keys(mu).length ? Object.keys(mu) : x.mon.moves;
+      return ids.filter(mid => D.moves[mid]).map(mid => ({ mid, w: Object.keys(mu).length ? mu[mid] : 1 }));
+    };
+    // share of each opponent's damage that is physical (usage-weighted)
+    const phys = opp.map(x => {
+      let p = 0, t = 0;
+      for (const { mid, w } of oppMoves(x)) { if (!isAttack(mid)) continue; const c = D.moves[mid].c; t += w; if (c === 0) p += w; }
+      return t ? p / t : 0;
+    });
+    const spreadShare = opp.map(x => {
+      let p = 0, t = 0;
+      for (const { mid, w } of oppMoves(x)) { if (!isAttack(mid)) continue; t += w; if (['allAdjacentFoes', 'allAdjacent'].includes(D.moves[mid].tg)) p += w; }
+      return t ? p / t : 0;
+    });
+    const oSpe = opp.map(x => Calc.speed(x.mon));
+    const nm = m => m.s.n;
+    return forms => {
+      const notes = []; let val = 0;
+      const has = mid => forms.filter(m => m.moves.includes(mid));
+      const pairs = forms.length * opp.length || 1;
+      const mySpe = forms.map(m => Calc.speed(m));
+      const count = f => { let n = 0; mySpe.forEach(a => oSpe.forEach(b => { if (f(a, b)) n++; })); return n; };
+      // speed control: best single option
+      const sc = [];
+      if (has('tailwind').length) { const n = count((a, b) => a <= b && a * 2 > b); sc.push({ v: 2 * n / pairs, t: `Tailwind (${nm(has('tailwind')[0])}) flips ${n}/${pairs} speed matchups` }); }
+      if (has('trickroom').length) {
+        const n = count((a, b) => a < b) - count((a, b) => a > b);
+        if (n > 0) sc.push({ v: 2 * n / pairs, t: `Trick Room (${nm(has('trickroom')[0])}): you're slower in most matchups (net ${n}/${pairs})` });
+      }
+      const dropper = forms.find(m => m.moves.includes('icywind') || m.moves.includes('electroweb'));
+      if (dropper) { const n = count((a, b) => a <= b && a * 1.5 > b); sc.push({ v: 1.2 * n / pairs, t: `${D.moves[dropper.moves.includes('icywind') ? 'icywind' : 'electroweb'].n} (${nm(dropper)}) flips ${n}/${pairs} speed matchups` }); }
+      if (sc.length) { const b = sc.reduce((a, c) => c.v > a.v ? c : a); if (b.v >= 0.05) { val += b.v; notes.push(b.t); } }
+      // Intimidate: how much of their damage it softens (blockers don't count, Defiant/Competitive punish it)
+      const intim = forms.filter(m => m.ability === 'intimidate');
+      if (intim.length) {
+        const eff = opp.map((x, j) => {
+          const a = x.mon.ability;
+          if (a === 'defiant' || a === 'competitive' || a === 'guarddog') return -0.6;
+          if (INTIM_BLOCK.includes(a)) return 0;
+          return phys[j];
+        });
+        const e = eff.reduce((a, b) => a + b, 0) / opp.length;
+        const v = 1.2 * e * (1 + 0.3 * (intim.length - 1));
+        val += v;
+        if (v >= 0.15 || v <= -0.05) notes.push(`Intimidate (${intim.map(nm).join(', ')}): ${opp.filter((_, j) => eff[j] > 0.5).length}/${opp.length} of them are mainly physical${eff.some(x => x < 0) ? ', but some punish it' : ''}`);
+      }
+      const fo = has('fakeout');
+      if (fo.length) { val += 0.35 + (fo.length > 1 ? 0.15 : 0); notes.push(`Fake Out (${fo.map(nm).join(', ')})`); }
+      const red = forms.filter(m => m.moves.includes('followme') || m.moves.includes('ragepowder'));
+      if (red.length) { val += 0.4; notes.push(`redirection (${nm(red[0])})`); }
+      const scr = forms.filter(m => m.moves.includes('reflect') || m.moves.includes('lightscreen') || m.moves.includes('auroraveil'));
+      if (scr.length) { val += 0.3; notes.push(`screens (${nm(scr[0])})`); }
+      const wg = has('wideguard');
+      if (wg.length) { const s = spreadShare.reduce((a, b) => a + b, 0) / opp.length; if (s > 0.1) { val += 1.2 * s; notes.push(`Wide Guard (${nm(wg[0])}) vs their spread moves`); } }
+      return { val, notes };
+    };
+  }
   const bringState = { opp: ['', '', '', '', '', ''] };
   function viewBring(v, list) {
     v.innerHTML = `<p class="muted">Enter their six (as seen at team preview). Each opponent uses its most common set. The score of your Pokémon
-      against theirs compares how fast each side KOs the other and who moves first. The suggested four cover their six best.</p>
+      against theirs compares how fast each side KOs the other and who moves first. The suggested four cover their six best, counting support (Tailwind, Trick Room, Intimidate, Fake Out...) too.</p>
       <div class="controls">${bringState.opp.map((o, i) => `<input data-i="${i}" placeholder="Their #${i + 1}" value="${esc(o)}" style="width:140px">`).join('')}</div><div id="bringOut"></div>`;
     v.querySelectorAll('[data-i]').forEach(inp => autocomplete(inp, AC.species));
     v.querySelectorAll('[data-i]').forEach(inp => inp.onchange = e => { bringState.opp[+e.target.dataset.i] = e.target.value; render(); });
@@ -880,15 +942,19 @@
     // (still holding the stone). Score those base forms too.
     const sets = filled();
     const isMega = list.map(m => !!m.s.ri);
-    const baseScore = list.map((m, i) => {
-      if (!isMega[i]) return score[i];
+
+    const baseMon = list.map((m, i) => {
+      if (!isMega[i]) return m;
       const b = D.species[toId(m.s.base)];
-      const set = sets[i];
-      return vsRow(Calc.mon({ ...set, species: b.n, ability: set.baseAbility || b.ab[0] }));
+      return Calc.mon({ ...sets[i], species: b.n, ability: sets[i].baseAbility || b.ab[0] });
     });
-    // best 4 of the team: maximise sum over their mons of the best answer + small average term; with 2+ Megas in
-    // the four, try each one as THE Mega and the others as base forms
-    const evalCombo = (c, rows) => opp.reduce((s, _, j) => s + Math.max(...c.map(i => rows(i)[j])), 0) + 0.25 * c.reduce((s, i) => s + rows(i).reduce((a, b) => a + b, 0) / opp.length, 0);
+    const baseScore2 = list.map((m, i) => isMega[i] ? vsRow(baseMon[i]) : score[i]);
+    const sup = supportModel(opp);
+    // best 4 of the team: maximise sum over their mons of the best answer + small average term + what the four
+    // do for each other (speed control, Intimidate, Fake Out, redirection...); with 2+ Megas in the four, try each
+    // one as THE Mega and the others as base forms
+    const evalCombo = (c, rows, forms) => opp.reduce((s, _, j) => s + Math.max(...c.map(i => rows(i)[j])), 0)
+      + 0.25 * c.reduce((s, i) => s + rows(i).reduce((a, b) => a + b, 0) / opp.length, 0) + sup(c.map(forms)).val;
     let best = null;
     const idx = list.map((_, i) => i);
     const combos = k => { const out = []; const rec = (s, a) => { if (a.length === k) { out.push(a); return; } for (let i = s; i < idx.length; i++) rec(i + 1, [...a, i]); }; rec(0, []); return out; };
@@ -896,16 +962,22 @@
       const megas = c.filter(i => isMega[i]);
       const choices = megas.length ? megas : [-1];
       for (const mega of choices) {
-        const val = evalCombo(c, i => (isMega[i] && i !== mega ? baseScore[i] : score[i]));
+        const asBase = i => isMega[i] && i !== mega;
+        const val = evalCombo(c, i => (asBase(i) ? baseScore2[i] : score[i]), i => (asBase(i) ? baseMon[i] : list[i]));
         if (!best || val > best.val) best = { c, val, mega };
       }
     }
+    const bestForms = best.c.map(i => (isMega[i] && i !== best.mega ? baseMon[i] : list[i]));
+    const supNotes = sup(bestForms).notes;
+    const supNote = supNotes.length ? `<div class="muted" style="margin-top:6px"><b>Support counted:</b> ${supNotes.map(esc).join('; ')}</div>` : '';
     const cell = x => `<td class="${x > 0.25 ? 'm05' : x < -0.25 ? 'm2' : ''}">${x > 0 ? '+' : ''}${x.toFixed(1)}</td>`;
     const extraMegas = best.c.filter(i => isMega[i] && i !== best.mega);
     const megaNote = extraMegas.length ? `<div class="warn">Only one Pokémon can Mega Evolve per battle: Mega Evolve <b>${esc(list[best.mega].s.n)}</b>;
       ${extraMegas.map(i => esc(D.species[toId(list[i].s.base)].n)).join(', ')} still ${extraMegas.length > 1 ? 'pull' : 'pulls'} its weight as the base form (scored that way).</div>` : '';
     $('#bringOut').innerHTML = `<div class="card"><h3>Suggested four: ${best.c.map(i => esc(isMega[i] && i !== best.mega ? D.species[toId(list[i].s.base)].n : list[i].s.n)).join(', ')}</h3>${megaNote}
-      <div class="muted">Positive = your Pokémon wins that 1-on-1 (KOs first / in fewer hits). A quick guide, not a full game plan.</div></div>
+      ${supNote}
+      <div class="muted">Table: positive = your Pokémon wins that 1-on-1 (KOs first / in fewer hits). The pick also counts what the four do
+      for each other (speed control, Intimidate, Fake Out, redirection, screens, Wide Guard). A quick guide, not a full game plan.</div></div>
       <div class="scroll"><table><tr><th class="name">You \\ Them</th>${opp.map(x => `<th>${esc(x.name)}</th>`).join('')}</tr>
       ${list.map((m, i) => `<tr class="${best.c.includes(i) ? 'you' : ''}"><td class="name">${esc(m.s.n)}</td>${score[i].map(cell).join('')}</tr>`).join('')}</table></div>`;
   }
