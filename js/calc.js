@@ -34,7 +34,7 @@ const Calc = (() => {
     const ab = s.ri || !s.ab.some(a => toId(a) === toId(set.ability)) ? toId(s.ab[0]) : toId(set.ability);
     return { id: toId(set.species), s, types: s.t, stats, maxHp: stats[0], hp: stats[0], item: toId(set.item),
       ability: ab, nature: set.nature, sp, moves: (set.moves || []).map(toId).filter(m => D.moves[m]),
-      boosts: [0, 0, 0, 0, 0, 0], status: null };
+      boosts: (set.boosts || [0, 0, 0, 0, 0, 0]).map(b => Math.max(-6, Math.min(6, +b || 0))), status: null };
   }
 
   const pokeRound = x => Math.ceil(x - 0.5);
@@ -274,6 +274,6 @@ const Calc = (() => {
     return s;
   }
 
-  return { TYPES, STATS, NATURES, toId, stat, mon, damage, range, hitsToKo, typeEff, defMult, defNote, speed, grounded, isSpread,
+  return { TYPES, STATS, NATURES, toId, stat, mon, stageMult, damage, range, hitsToKo, typeEff, defMult, defNote, speed, grounded, isSpread,
     set data(d) { D = d; }, get data() { return D; } };
 })();

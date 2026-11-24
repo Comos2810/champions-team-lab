@@ -48,7 +48,7 @@
   }
 
   // ------------------------------------------------------------------ team state
-  const emptySet = () => ({ species: '', item: '', ability: '', nature: 'Hardy', sp: [0, 0, 0, 0, 0, 0], moves: ['', '', '', ''] });
+  const emptySet = () => ({ species: '', item: '', ability: '', nature: 'Hardy', sp: [0, 0, 0, 0, 0, 0], moves: ['', '', '', ''], boosts: [0, 0, 0, 0, 0, 0] });
   function loadTeam() {
     const fromHash = decodeTeam(location.hash.slice(1));
     let t = fromHash;
@@ -61,14 +61,14 @@
     metaMatchCache.clear();
   }
   function encodeTeam() {
-    const compact = team.filter(s => s.species).map(s => [s.species, s.item, s.ability, s.nature, s.sp.join('.'), s.moves.join('|')]);
+    const compact = team.filter(s => s.species).map(s => [s.species, s.item, s.ability, s.nature, s.sp.join('.'), s.moves.join('|'), (s.boosts || []).join('.')]);
     return btoa(unescape(encodeURIComponent(JSON.stringify(compact)))).replace(/=+$/, '');
   }
   function decodeTeam(str) {
     if (!str) return null;
     try {
       const arr = JSON.parse(decodeURIComponent(escape(atob(str))));
-      return arr.map(([species, item, ability, nature, sp, moves]) => ({ species, item, ability, nature, sp: sp.split('.').map(Number), moves: moves.split('|') }));
+      return arr.map(([species, item, ability, nature, sp, moves, boosts]) => ({ species, item, ability, nature, sp: sp.split('.').map(Number), moves: moves.split('|'), boosts: boosts ? boosts.split('.').map(Number) : [0, 0, 0, 0, 0, 0] }));
     } catch { return null; }
   }
   const filled = () => team.filter(s => D.species[toId(s.species)]);
@@ -94,6 +94,10 @@
       </div>
       <div class="sp">${STAT_LABEL.map((l, k) => `<label>${l}<input type="number" min="0" max="32" value="${set.sp[k] || 0}" data-k="${k}"><span class="stat"></span></label>`).join('')}</div>
       <div class="row muted" style="justify-content:space-between"><span class="total"></span><span class="nat"></span></div>
+      <div class="stages" title="Stat stages (boosts/drops) used in Meta matchups, Speed tiers, Spread finder and Bring 4">
+        <span class="muted">Stages</span>${[1, 2, 3, 4, 5].map(k => `<label>${STAT_LABEL[k]}<select data-b="${k}">${[6, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -5, -6].map(v => `<option value="${v}" ${(set.boosts?.[k] || 0) === v ? 'selected' : ''}>${v > 0 ? '+' + v : v}</option>`).join('')}</select></label>`).join('')}
+        <button class="small ghost reset-b" title="Reset all stages to 0">0</button>
+      </div>
       <div class="moves">${[0, 1, 2, 3].map(k => `<input class="move" data-k="${k}" list="dl-moves-${i}" placeholder="Move ${k + 1}" value="${esc(moveName(set.moves[k]))}">`).join('')}</div>
       <datalist id="dl-moves-${i}">${(sp.mp || Object.keys(D.moves)).map(m => D.moves[m]).filter(Boolean).map(m => `<option value="${esc(m.n)}">`).join('')}</datalist>` : ''}
     </div>`);
@@ -115,6 +119,11 @@
     el.querySelectorAll('.sp input').forEach(inp => inp.onchange = e => {
       set.sp[+e.target.dataset.k] = Math.max(0, Math.min(MAX_STAT_SP, +e.target.value || 0)); e.target.value = set.sp[+e.target.dataset.k]; upd();
     });
+    el.querySelectorAll('[data-b]').forEach(sel => sel.onchange = e => {
+      if (!set.boosts) set.boosts = [0, 0, 0, 0, 0, 0];
+      set.boosts[+e.target.dataset.b] = +e.target.value; upd();
+    });
+    $('.reset-b', el).onclick = () => { set.boosts = [0, 0, 0, 0, 0, 0]; saveTeam(); renderSlots(); render(); };
     el.querySelectorAll('.move').forEach(inp => inp.onchange = e => { set.moves[+e.target.dataset.k] = toId(e.target.value); upd(); });
     updateStats(el, set);
     return el;
@@ -122,7 +131,12 @@
   function updateStats(el, set) {
     const m = Calc.mon(set);
     if (!m) return;
-    el.querySelectorAll('.sp .stat').forEach((s, k) => s.textContent = m.stats[k]);
+    el.querySelectorAll('.sp .stat').forEach((s, k) => {
+      const b = m.boosts[k];
+      s.innerHTML = b ? `<span class="${b > 0 ? 'good' : 'bad'}">${Math.floor(m.stats[k] * Calc.stageMult(b))}</span>` : m.stats[k];
+      s.title = b ? `${m.stats[k]} at ${b > 0 ? '+' : ''}${b}` : '';
+    });
+    el.querySelectorAll('[data-b]').forEach(sel => sel.classList.toggle('on', +sel.value !== 0));
     const tot = set.sp.reduce((a, b) => a + (+b || 0), 0);
     const t = $('.total', el);
     t.textContent = `${tot} / ${MAX_SP} SP`;
@@ -300,7 +314,7 @@
   }
   const metaMatchCache = new Map();
   function matchup(m, f) {
-    const key = JSON.stringify([m.id, m.item, m.ability, m.nature, m.sp, m.moves, f]);
+    const key = JSON.stringify([m.id, m.item, m.ability, m.nature, m.sp, m.moves, m.boosts, f]);
     if (metaMatchCache.has(key)) return metaMatchCache.get(key);
     const rows = meta().map(x => {
       const mine = bestHit(m, x.mon, f);
@@ -432,7 +446,7 @@
 
   function viewMeta(v, list) {
     v.innerHTML = `<p class="muted">Against the top ${meta().length} Pokémon by usage (each with its most common item, ability, spread; their
-      moves = everything at least 15% of them run). Percentages are usage-weighted shares of the meta. OHKO/2HKO count damage rolls
+      moves = everything at least 15% of them run). Stat stages you set on your Pokémon are used. Percentages are usage-weighted shares of the meta. OHKO/2HKO count damage rolls
       (no crits, Sash/Sturdy ignored); "back" = they do it to you with their best common move.</p>`;
     v.append(fieldControls(field, render));
     let html = `<div class="scroll"><table><tr><th class="name">Pokémon</th><th>You OHKO</th><th>You 2HKO</th><th>OHKO you</th><th>2HKO you</th><th>You outspeed</th></tr>`;
@@ -463,7 +477,7 @@
     const opts = viewSpeed.opts || (viewSpeed.opts = { tw: false, n: 40 });
     const entries = meta(opts.n).map(x => ({ name: x.name, s: Calc.speed(x.mon), note: `${x.set.nature} ${x.set.sp[5]} SP`, usage: x.usage, you: false, scarf: x.scarf }));
     meta(opts.n).filter(x => x.scarf).forEach(x => entries.push({ name: x.name + ' (Scarf)', s: Math.floor(Calc.speed(x.mon) * 1.5), note: '', usage: x.usage * (D.usage[x.id].it.choicescarf || 0) }));
-    for (const m of list) entries.push({ name: m.s.n, s: Calc.speed(m, { tailwind: opts.tw }), note: `${m.nature} ${m.sp[5]} SP${opts.tw ? ', Tailwind' : ''}${m.item === 'choicescarf' ? ', Scarf' : ''}`, you: true });
+    for (const m of list) entries.push({ name: m.s.n, s: Calc.speed(m, { tailwind: opts.tw }), note: `${m.nature} ${m.sp[5]} SP${m.boosts[5] ? `, ${m.boosts[5] > 0 ? '+' : ''}${m.boosts[5]} Spe` : ''}${opts.tw ? ', Tailwind' : ''}${m.item === 'choicescarf' ? ', Scarf' : ''}`, you: true });
     entries.sort((a, b) => b.s - a.s);
     v.innerHTML = `<div class="controls"><label><input type="checkbox" id="spTw" ${opts.tw ? 'checked' : ''}> Your side has Tailwind</label>
       <span class="muted">Meta speeds use each Pokémon's most common nature and Speed SP. Under Trick Room read the list bottom-up.</span></div>
