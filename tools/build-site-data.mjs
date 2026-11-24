@@ -53,7 +53,7 @@ const usage = {};
 for (const [id, u] of Object.entries(dex.usage)) {
   if (!species[id] || u.usage < 0.003) continue;
   usage[id] = { u: round(u.usage), ab: topN(u.abilities, 3, 0.02), it: topN(u.items, 5, 0.02), mv: topN(u.moves, 10, 0.04),
-    sp: topN(u.spreads, 4, 0.01), tm: topN(u.teammates, 10, 0.02) };
+    sp: topN(u.spreads, 25, 0.01), tm: topN(u.teammates, 10, 0.02) };
 }
 const out = { reg, builtAt: new Date().toISOString(), source: dex.meta.usageSource, rules: dex.meta.rules,
   mechanicsNotes: dex.meta.mechanicsNotes, typeChart: dex.typeChart, species, moves, items, abilities, usage };
