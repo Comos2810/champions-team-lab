@@ -654,15 +654,20 @@
     const set = sets[spreadState.slot];
     const metaNames = meta().map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
     v.innerHTML = `<p class="muted">Pick goals; the finder looks for the spread (and nature) that meets all of them with the fewest Stat Points,
-      then puts the rest into HP/defenses. Attackers use their most common meta set.</p>
+      then puts the rest into its attacking stat and HP/defenses. Attackers use their most common meta set. Suggested goals come in priority
+      order: outspeed threats first (unless the team plays it under Trick Room), then OHKOs, then bulk.</p>
       <div class="controls"><label>Pokémon <select id="sfSlot">${sets.map((s, i) => `<option value="${i}" ${i === spreadState.slot ? 'selected' : ''}>${esc(s.species)}</option>`).join('')}</select></label>
+        <label>Speed plan <select id="sfPlan"><option value="auto">Auto: ${esc(teamPlan().label)}</option><option value="fast">Outspeed (Tailwind / fast)</option><option value="tr">Trick Room (min Speed)</option></select></label>
         <button id="sfSuggest">Suggest goals from the meta</button><button id="sfAdd">+ Add goal</button></div>
       <div id="sfGoals"></div><div id="sfOut"></div>`;
+    $('#sfPlan').value = spreadState.plan || 'auto';
+    $('#sfPlan').onchange = e => { spreadState.plan = e.target.value; render(); };
+    spreadState.tr = isTrickRoomMon(set);
     $('#sfSlot').onchange = e => { spreadState.slot = +e.target.value; spreadState.goals = []; render(); };
     $('#sfAdd').onclick = () => { spreadState.goals.push({ kind: 'survive', who: meta()[0].id, move: '', hits: 1 }); render(); };
     $('#sfSuggest').onclick = () => {
       // keep only goals this Pokémon can meet, adding them while all of them together still fit in 66 SP
-      const cands = suggestGoals(Calc.mon(set)).filter(g => findSpread(set, [g]).length);
+      const cands = suggestGoals(set).filter(g => findSpread(set, [g]).length);
       const keep = [];
       for (const g of cands) if (findSpread(set, [...keep, g]).length) keep.push(g);
       spreadState.goals = keep;
@@ -740,10 +745,14 @@
       for (const k of order) { const add = Math.min(32 - sp[k], left); sp[k] += add; left -= add; }
       const minTotal = used + bestBulk.tot;
       const n = Calc.NATURES[nature] || [];
-      const penalty = (n[1] === mainAtk ? 3 : 0) + (n[1] === 5 && goals.some(g => g.kind === 'outspeed') ? 3 : 0) - (n[0] === mainAtk ? 0.5 : 0);
+      const penalty = (n[1] === mainAtk ? 3 : 0) + (n[1] === 5 && goals.some(g => g.kind === 'outspeed') ? 3 : 0) - (n[0] === mainAtk ? 0.5 : 0)
+        + (spreadState.tr ? (n[1] === 5 ? -1 : 1) : (n[1] === 5 && me0.s.bs[5] >= 80 ? 2 : 0));
       results.push({ nature, sp, minTotal, rank: minTotal + penalty });
     }
-    return results.sort((a, b) => a.rank - b.rank).slice(0, 4);
+    // don't offer natures that lower the stat it attacks with (Jolly on a special attacker) if anything else works
+    const atkStat = (() => { const a = Calc.mon(set).moves.filter(isAttack).map(m => D.moves[m].c); return !a.length ? -1 : a.filter(c => c === 0).length >= a.filter(c => c === 1).length ? 1 : 3; })();
+    const ok = results.filter(r => (Calc.NATURES[r.nature] || [])[1] !== atkStat);
+    return (ok.length ? ok : results).sort((a, b) => a.rank - b.rank).slice(0, 4);
   }
   function renderSpreadResult(set, goals) {
     const res = findSpread(set, goals);
@@ -764,16 +773,66 @@
     saveTeam(); renderSlots(); render(); toast('Spread applied');
   });
   /** Goals worth having: survive the most common hits that nearly KO you, outspeed the common Pokémon just above you, KO the common ones you nearly KO. */
-  function suggestGoals(m) {
-    const r = matchup(m, field).rows.slice().sort((a, b) => b.x.usage - a.x.usage).filter(row => row.x.id !== toId(m.s.base) && row.x.id !== m.id);
+  /**
+   * Goals in priority order (the finder keeps them in this order while they still fit in 66 SP):
+   *  1. outspeed the fastest common threat it can reach with max Speed (skipped on a Trick Room team),
+   *  2. OHKO the most-used Pokémon it can OHKO with full investment,
+   *  3. survive the common hits that nearly KO it.
+   */
+  /**
+   * Is the TEAM built around Trick Room? Needs a Trick Room setter plus at least two slow attackers (base Spe <= 60)
+   * besides the setter. A team with Tailwind too is Tailroom: there, only its slow members play under Trick Room.
+   * A Trick Room user on an otherwise fast team (e.g. Farigiraf for reverse TR) doesn't make it a TR team.
+   */
+  function teamPlan() {
+    const ms = mons();
+    const setters = ms.filter(m => m.moves.includes('trickroom'));
+    const tw = ms.some(m => m.moves.includes('tailwind'));
+    const slow = ms.filter(m => m.s.bs[5] <= 60 && !(setters.length === 1 && setters[0] === m));
+    if (setters.length && slow.length >= 2) {
+      return tw ? { mode: 'tailroom', label: `Tailroom: slow members play Trick Room (${setters.map(m => m.s.n).join(', ')} sets it), the rest outspeed`, slow }
+                : { mode: 'tr', label: `Trick Room team (${setters.map(m => m.s.n).join(', ')} sets it; ${slow.length} slow attackers)`, slow };
+    }
+    return { mode: 'fast', label: setters.length ? 'speed team (Trick Room here is a counter, not the plan)' : 'speed team', slow };
+  }
+  function isTrickRoomMon(set) {
+    const plan = spreadState.plan || 'auto';
+    if (plan !== 'auto') return plan === 'tr';
+    const t = teamPlan();
+    if (t.mode === 'tr') return true;
+    if (t.mode === 'tailroom') { const m = Calc.mon(set); return t.slow.some(x => x.id === m.id); }
+    return false;
+  }
+  function suggestGoals(set) {
+    const m = Calc.mon(set);
+    const self = [m.id, toId(m.s.base)];
+    const ms = meta().filter(x => !self.includes(x.id) && !self.includes(x.megaId) && x.usage >= 0.02).sort((a, b) => b.usage - a.usage);
+    const atks = m.moves.filter(isAttack).map(mid => D.moves[mid].c);
+    const mainAtk = !atks.length ? -1 : (atks.filter(c => c === 0).length >= atks.filter(c => c === 1).length ? 1 : 3);
     const goals = [];
-    for (const row of r) {
-      if (goals.filter(g => g.kind === 'survive').length < 3 && row.theirs && row.theirs.r.hi >= 0.85 && row.theirs.r.lo < 1.15)
-        goals.push({ kind: 'survive', who: row.x.id, move: row.theirs.mid, hits: 1 });
-      if (goals.filter(g => g.kind === 'ko').length < 2 && row.mine && row.mine.r.hi >= 0.9 && row.mine.r.lo < 1)
-        goals.push({ kind: 'ko', who: row.x.id, move: row.mine.mid, hits: 1 });
-      if (goals.filter(g => g.kind === 'outspeed').length < 2 && row.sThem >= row.sMe && row.sThem <= row.sMe + 12 && !row.x.scarf)
-        goals.push({ kind: 'outspeed', who: row.x.id });
+    // 1. speed
+    let nature = mainAtk === 1 ? 'Adamant' : mainAtk === 3 ? 'Modest' : set.nature;
+    if (!spreadState.tr) {
+      const fastNature = mainAtk === 3 ? 'Timid' : 'Jolly';
+      const sp = set.sp.slice(); sp[5] = 32;
+      const myMax = Calc.speed(Calc.mon({ ...set, nature: fastNature, sp }));
+      const reach = ms.map(x => ({ x, s: plainSpeed(x) })).filter(c => c.s < myMax).sort((a, b) => b.s - a.s || b.x.usage - a.x.usage);
+      if (reach.length) { goals.push({ kind: 'outspeed', who: reach[0].x.id }); nature = fastNature; }
+    }
+    // 2. OHKOs it can get with full attack investment (with the nature the speed goal leaves it)
+    if (mainAtk > 0) {
+      const sp = set.sp.slice(); sp[mainAtk] = 32;
+      const strong = Calc.mon({ ...set, nature, sp });
+      for (const x of ms) {
+        if (goals.filter(g => g.kind === 'ko').length >= 2) break;
+        const b = bestHit(strong, x.mon, field);
+        if (b && b.r.lo >= 1) goals.push({ kind: 'ko', who: x.id, move: b.mid, hits: 1 });
+      }
+    }
+    // 3. bulk: common hits that come close to KOing it
+    for (const row of matchup(m, field).rows.filter(r => !self.includes(r.x.id)).sort((a, b) => b.x.usage - a.x.usage)) {
+      if (goals.filter(g => g.kind === 'survive').length >= 2) break;
+      if (row.theirs && row.theirs.r.hi >= 0.85 && row.theirs.r.lo < 1.3) goals.push({ kind: 'survive', who: row.x.id, move: row.theirs.mid, hits: 1 });
     }
     return goals;
   }
