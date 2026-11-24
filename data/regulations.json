@@ -1,0 +1,11 @@
+{
+ "default": "m-c",
+ "list": [
+  {
+   "id": "m-c",
+   "name": "Regulation M-C",
+   "usageMonth": "2026-10",
+   "built": "2026-11-23T22:53:10.961Z"
+  }
+ ]
+}
