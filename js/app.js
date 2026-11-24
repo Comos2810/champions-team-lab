@@ -711,7 +711,8 @@
     for (const nature of natures) {
       const sp = [0, 0, 0, 0, 0, 0];
       // offense & speed: minimal single-stat requirements
-      const need = (k, test) => { for (let v = 0; v <= 32; v++) { sp[k] = v; if (test()) return true; } sp[k] = 0; return false; };
+      // raise the stat from where earlier goals left it (starting from 0 each time let the last goal undo the others)
+      const need = (k, test) => { const start = sp[k]; for (let v = start; v <= 32; v++) { sp[k] = v; if (test()) return true; } sp[k] = start; return false; };
       let ok = true;
       for (const g of goals.filter(g => g.kind === 'outspeed')) ok = ok && need(5, () => goalOk(set, g, sp, nature));
       const physical = goals.filter(g => g.kind === 'ko').some(g => { const me = Calc.mon(set); const b = g.move || (bestHit(me, meta().find(m => m.id === g.who).mon, field) || {}).mid; return b && D.moves[b].c === 0; });
