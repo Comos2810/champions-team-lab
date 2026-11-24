@@ -316,16 +316,39 @@
     if (hi < 1) return 0; if (lo >= 1) return 1;
     return (hi - 1) / (hi - lo);
   }
+  /**
+   * The opponent as it is after the stat changes you chose for their side: manual stages, plus Intimidate with the
+   * abilities/items that block or punish it (Defiant +2 Atk, Competitive +2 SpA, Clear Body, Inner Focus, White Herb...).
+   */
+  const INTIM_BLOCK = ['clearbody', 'whitesmoke', 'fullmetalbody', 'hypercutter', 'innerfocus', 'oblivious', 'owntempo', 'scrappy', 'mirrorarmor', 'guarddog'];
+  function oppStaged(mon, f) {
+    const b = (f.oppBoosts || [0, 0, 0, 0, 0, 0]).slice();
+    let note = '';
+    if (f.intim) {
+      if (mon.ability === 'guarddog') { b[1] += 1; note = 'Guard Dog +1'; }
+      else if (INTIM_BLOCK.includes(mon.ability)) note = (D.abilities[mon.ability]?.n || mon.ability) + ' blocks';
+      else if (mon.item === 'whiteherb') note = 'White Herb';
+      else {
+        b[1] -= 1;
+        if (mon.ability === 'defiant') { b[1] += 2; note = 'Defiant +2'; }
+        if (mon.ability === 'competitive') { b[3] += 2; note = 'Competitive +2 SpA'; }
+        if (mon.ability === 'rattled') { b[5] += 1; note = 'Rattled +1 Spe'; }
+      }
+    }
+    const clamped = b.map((v, k) => Math.max(-6, Math.min(6, v + (mon.boosts[k] || 0))));
+    return { mon: { ...mon, boosts: clamped }, note };
+  }
   const metaMatchCache = new Map();
   function matchup(m, f) {
     const key = JSON.stringify([m.id, m.item, m.ability, m.nature, m.sp, m.moves, m.boosts, f]);
     if (metaMatchCache.has(key)) return metaMatchCache.get(key);
     const rows = meta().map(x => {
-      const mine = bestHit(m, x.mon, f);
+      const { mon: them, note } = oppStaged(x.mon, f);
+      const mine = bestHit(m, them, f);
       // their moves: only ones at least 15% of them run
-      const theirs = bestHit(x.mon, m, f, mid => (x.moveUse[mid] || 0) >= 0.15);
-      const sMe = Calc.speed(m, f), sThem = Calc.speed(x.mon, {});
-      return { x, mine, theirs, ohko: mine ? koChance(mine.r, 1) : 0, twohko: mine ? koChance(mine.r, 2) : 0,
+      const theirs = bestHit(them, m, f, mid => (x.moveUse[mid] || 0) >= 0.15);
+      const sMe = Calc.speed(m, f), sThem = Calc.speed(them, {});
+      return { x, note, mine, theirs, ohko: mine ? koChance(mine.r, 1) : 0, twohko: mine ? koChance(mine.r, 2) : 0,
         ohkoBack: theirs ? koChance(theirs.r, 1) : 0, twohkoBack: theirs ? koChance(theirs.r, 2) : 0,
         faster: sMe > sThem ? 1 : sMe === sThem ? 0.5 : 0, sMe, sThem: Math.floor(sThem) };
     });
@@ -453,6 +476,14 @@
       moves = everything at least 15% of them run). Stat stages you set on your Pokémon are used. Percentages are usage-weighted shares of the meta. OHKO/2HKO count damage rolls
       (no crits, Sash/Sturdy ignored); "back" = they do it to you with their best common move.</p>`;
     v.append(fieldControls(field, render));
+    if (!field.oppBoosts) field.oppBoosts = [0, 0, 0, 0, 0, 0];
+    const oc = h(`<div class="controls card"><b>Their side</b>
+      <label title="Every opponent takes -1 Atk, except abilities/items that block or punish it"><input type="checkbox" id="oppIntim" ${field.intim ? 'checked' : ''}> Intimidated</label>
+      <span class="muted">Stages:</span>${[1, 2, 3, 4, 5].map(k => `<label>${STAT_LABEL[k]} <select data-ob="${k}">${[6, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -5, -6].map(n => `<option value="${n}" ${field.oppBoosts[k] === n ? 'selected' : ''}>${n > 0 ? '+' + n : n}</option>`).join('')}</select></label>`).join('')}
+      <span class="muted">(Intimidate respects Defiant, Competitive, Clear Body, Inner Focus, Guard Dog, White Herb…)</span></div>`);
+    oc.querySelector('#oppIntim').onchange = e => { field.intim = e.target.checked; render(); };
+    oc.querySelectorAll('[data-ob]').forEach(sel => sel.onchange = e => { field.oppBoosts = field.oppBoosts.slice(); field.oppBoosts[+e.target.dataset.ob] = +e.target.value; render(); });
+    v.append(oc);
     let html = `<div class="scroll"><table><tr><th class="name">Pokémon</th><th>You OHKO</th><th>You 2HKO</th><th>OHKO you</th><th>2HKO you</th><th>You outspeed</th></tr>`;
     const res = list.map(m => ({ m, r: matchup(m, field) }));
     for (const { m, r } of res) {
@@ -467,7 +498,7 @@
       for (const row of r.rows) {
         const d = x => x ? `${pct(x.r.lo)}–${pct(x.r.hi)}` : '—';
         const cls = x => x ? (x.r.lo >= 1 ? 'bad' : x.r.hi >= 1 ? 'warn' : '') : '';
-        t += `<tr><td class="name">${esc(row.x.name)}</td><td>${pct(row.x.usage)}</td>
+        t += `<tr><td class="name">${esc(row.x.name)}${row.note ? ` <span class="muted">(${esc(row.note)})</span>` : ''}</td><td>${pct(row.x.usage)}</td>
           <td>${row.mine ? esc(D.moves[row.mine.mid].n) : '—'}</td><td class="${row.mine && row.mine.r.lo >= 1 ? 'good' : ''}">${d(row.mine)}</td>
           <td>${row.theirs ? esc(D.moves[row.theirs.mid].n) : '—'}</td><td class="${cls(row.theirs)}">${d(row.theirs)}</td>
           <td class="${row.faster === 1 ? 'good' : row.faster === 0 ? 'bad' : 'warn'}">${row.sMe} / ${row.sThem}${row.x.mon.item === 'choicescarf' ? ' (Scarf)' : ''}</td></tr>`;
@@ -619,7 +650,8 @@
     if (!x) return true;
     if (g.kind === 'outspeed') return Calc.speed(me) > (g.scarf ? scarfSpeed(x) : plainSpeed(x));
     if (g.kind === 'survive') {
-      const b = g.move ? { r: Calc.range(x.mon, me, g.move, field) } : bestHit(x.mon, me, field, mid => (x.moveUse[mid] || 0) >= 0.15);
+      const them = oppStaged(x.mon, field).mon;   // same "their side" stages / Intimidate as Meta matchups
+      const b = g.move ? { r: Calc.range(them, me, g.move, field) } : bestHit(them, me, field, mid => (x.moveUse[mid] || 0) >= 0.15);
       return !b || b.r.hi * g.hits < 1;
     }
     const b = g.move ? { r: Calc.range(me, x.mon, g.move, field) } : bestHit(me, x.mon, field);
