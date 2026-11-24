@@ -282,7 +282,7 @@
 
   // ------------------------------------------------------------------ meta (common sets of the top Pokémon)
   function meta(n = 60) {
-    if (metaCache) return metaCache;
+    if (metaCache && metaCache.n === n) return metaCache;
     const ids = Object.keys(D.usage).sort((a, b) => D.usage[b].u - D.usage[a].u).slice(0, n);
     const total = ids.reduce((s, id) => s + D.usage[id].u, 0);
     metaCache = ids.map(id => {
@@ -292,6 +292,7 @@
       return { id, megaId, name: megaId ? D.species[megaId].n : D.species[id].n, set, mon: m, w: u.u / total, usage: u.u,
         scarf: (u.it.choicescarf || 0) >= 0.2, moveUse: u.mv };
     });
+    metaCache.n = n;
     return metaCache;
   }
   /** Speed of a meta Pokémon without a Scarf, and with one. Its common set may already hold the Scarf. */
@@ -477,19 +478,55 @@
   }
 
   function viewSpeed(v, list) {
-    const opts = viewSpeed.opts || (viewSpeed.opts = { tw: false, n: 40 });
-    const spread = x => `${x.set.nature} ${x.set.sp[5]} SP`;
-    const scarfShare = x => D.usage[x.id].it.choicescarf || 0;
-    // every meta Pokémon without a Scarf, plus a Scarf line for the ones that often run it (usage = share running it)
-    const entries = meta(opts.n).map(x => ({ name: x.name, s: plainSpeed(x), note: spread(x), usage: x.usage * (1 - scarfShare(x)), you: false }));
-    meta(opts.n).filter(x => x.scarf).forEach(x => entries.push({ name: x.name + ' (Scarf)', s: scarfSpeed(x), note: spread(x) + ', Choice Scarf', usage: x.usage * scarfShare(x) }));
+    const opts = viewSpeed.opts || (viewSpeed.opts = { tw: false, n: 60, min: 0.08 });
+    const ms = meta(opts.n);
+    const entries = [];
+    for (const x of ms) {
+      const u = D.usage[x.id];
+      // group its common spreads by the Speed they give (e.g. Jolly 32 and Adamant 32 are two lines)
+      const groups = new Map();
+      let listed = 0;
+      for (const [spr, share] of Object.entries(u.sp || {})) {
+        const [nature, nums] = spr.split(':');
+        const spe = +nums.split('/')[5];
+        const m = Calc.mon({ ...x.set, nature, sp: nums.split('/').map(Number) });
+        const s0 = Calc.speed({ ...m, item: '' });
+        const g = groups.get(s0) || { s: s0, share: 0, labels: new Map(), fast: false };
+        g.share += share; listed += share;
+        // Scarf users invest in Speed: only spreads with 20+ Speed SP and no -Spe nature get a Scarf line
+        if (spe >= 20 && (Calc.NATURES[nature] || [])[1] !== 5) g.fast = true;
+        const lab = `${nature} ${spe} SP`;
+        g.labels.set(lab, (g.labels.get(lab) || 0) + share);
+        groups.set(s0, g);
+      }
+      if (!groups.size) groups.set(plainSpeed(x), { s: plainSpeed(x), share: 1, labels: new Map([[`${x.set.nature} ${x.set.sp[5]} SP`, 1]]) });
+      const total = listed || 1;
+      const scarf = u.it.choicescarf || 0;
+      const fastFrac = [...groups.values()].filter(g => g.fast).reduce((a, g) => a + g.share / total, 0);
+      for (const g of groups.values()) {
+        const frac = g.share / total;
+        if (frac < opts.min && g !== [...groups.values()].sort((a, b) => b.share - a.share)[0]) continue;
+        const label = [...g.labels.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([l]) => l).join(' / ');
+        const pctSets = `${Math.round(frac * 100)}% of its spreads`;
+        // the Scarf sets are spread over the fast spreads only
+        const scarfHere = g.fast && fastFrac > 0 ? Math.min(frac, scarf * frac / fastFrac) : 0;
+        if (frac - scarfHere > 0.005 || !g.fast) entries.push({ name: x.name, s: g.s, note: `${label} · ${pctSets}`, usage: x.usage * (frac - scarfHere) });
+        if (scarf >= 0.05 && g.fast) entries.push({ name: x.name + ' (Scarf)', s: Math.floor(g.s * 1.5), note: `${label}, Choice Scarf · ${Math.round(scarf * 100)}% of ${x.name} run Scarf`, usage: x.usage * scarfHere });
+      }
+    }
     for (const m of list) entries.push({ name: m.s.n, s: Calc.speed(m, { tailwind: opts.tw }), note: `${m.nature} ${m.sp[5]} SP${m.boosts[5] ? `, ${m.boosts[5] > 0 ? '+' : ''}${m.boosts[5]} Spe` : ''}${opts.tw ? ', Tailwind' : ''}${m.item === 'choicescarf' ? ', Scarf' : ''}`, you: true });
-    entries.sort((a, b) => b.s - a.s);
+    entries.sort((a, b) => b.s - a.s || (b.you ? 1 : 0) - (a.you ? 1 : 0));
+    const usageCount = Object.keys(D.usage).length;
     v.innerHTML = `<div class="controls"><label><input type="checkbox" id="spTw" ${opts.tw ? 'checked' : ''}> Your side has Tailwind</label>
-      <span class="muted">Meta speeds use each Pokémon's most common nature and Speed SP. Under Trick Room read the list bottom-up.</span></div>
+      <label>Show <select id="spN">${[30, 60, 100, 200].map(n => `<option value="${n}" ${opts.n === n ? 'selected' : ''}>${n >= usageCount ? 'all ' + usageCount : 'top ' + n}</option>`).join('')}</select> by usage</label>
+      <label>Hide spreads under <select id="spMin">${[0, 0.05, 0.08, 0.15, 0.3].map(n => `<option value="${n}" ${opts.min === n ? 'selected' : ''}>${n * 100}%</option>`).join('')}</select> of a Pokémon</label></div>
+      <p class="muted">Each Pokémon is split by the Speeds its common spreads give (Jolly vs Adamant, 32 vs less), plus a Scarf line when at least 5% run
+      Choice Scarf. Usage = share of all teams with that Pokémon at that Speed. Under Trick Room read the list bottom-up.</p>
       <div class="scroll"><table><tr><th>Speed</th><th class="name">Pokémon</th><th class="name">Spread</th><th>Usage</th></tr>
-      ${entries.map(e => `<tr class="${e.you ? 'you' : ''}"><td>${e.s}</td><td class="name">${esc(e.name)}</td><td class="name muted">${esc(e.note)}</td><td>${e.usage ? pct(e.usage) : ''}</td></tr>`).join('')}</table></div>`;
+      ${entries.map(e => `<tr class="${e.you ? 'you' : ''}"><td>${e.s}</td><td class="name">${esc(e.name)}</td><td class="name muted">${esc(e.note)}</td><td>${e.usage ? (e.usage >= 0.01 ? pct(e.usage) : '<1%') : ''}</td></tr>`).join('')}</table></div>`;
     $('#spTw').onchange = e => { opts.tw = e.target.checked; render(); };
+    $('#spN').onchange = e => { opts.n = +e.target.value; render(); };
+    $('#spMin').onchange = e => { opts.min = +e.target.value; render(); };
   }
 
   // helpers for archetype tool tests
