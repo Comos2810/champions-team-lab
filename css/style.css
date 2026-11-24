@@ -70,3 +70,5 @@ footer { padding: 16px; font-size: 12px; }
 .ac div { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--line); font-size: 15px; }
 .ac div:last-child { border-bottom: none; }
 .ac div:hover, .ac div.on { background: #24476b; }
+.ac div.cur { font-weight: 700; color: var(--accent); }
+.ac { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
