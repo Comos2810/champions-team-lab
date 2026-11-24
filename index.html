@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Champions Team Lab</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <h1>Champions Team Lab</h1>
+  <div class="hdr-right">
+    <label>Regulation <select id="reg"></select></label>
+    <span id="regInfo" class="muted"></span>
+  </div>
+</header>
+
+<section id="teamBar">
+  <div class="bar-buttons">
+    <button id="btnImport">Import paste</button>
+    <button id="btnExport">Export paste</button>
+    <button id="btnShare">Copy share link</button>
+    <button id="btnClear" class="ghost">Clear team</button>
+  </div>
+  <div id="slots" class="slots"></div>
+</section>
+
+<nav id="tabs">
+  <button data-tab="defense" class="on">Defense</button>
+  <button data-tab="offense">Offense</button>
+  <button data-tab="meta">Meta matchups</button>
+  <button data-tab="speed">Speed tiers</button>
+  <button data-tab="arch">Archetypes</button>
+  <button data-tab="spread">Spread finder</button>
+  <button data-tab="bring">Bring 4</button>
+</nav>
+<main id="view"></main>
+
+<dialog id="pasteDlg">
+  <form method="dialog">
+    <h3 id="pasteTitle">Paste</h3>
+    <textarea id="pasteText" rows="18" spellcheck="false"></textarea>
+    <div class="dlg-buttons"><button id="pasteOk" value="ok">OK</button><button value="cancel" class="ghost">Close</button></div>
+  </form>
+</dialog>
+
+<footer class="muted">
+  Damage, stats and usage follow Pokémon Champions rules (Lv 50, 66 Stat Points). Usage data: Smogon Champions VGC stats.
+  Meta sets use each Pokémon's most common item, ability and spread. <span id="buildInfo"></span>
+</footer>
+<script src="js/calc.js"></script>
+<script src="js/archetypes.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
