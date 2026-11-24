@@ -868,23 +868,43 @@
     });
     if (!opp.length) return;
     // score[i][j] in -1..1: my i vs their j
-    const score = list.map(m => opp.map(x => {
+    const vsRow = m => opp.map(x => {
       const mine = bestHit(m, x.mon, {}), theirs = bestHit(x.mon, m, {}, mid => (x.moveUse[mid] || 0) >= 0.15 || !D.usage[x.id]);
       const hMe = mine ? Calc.hitsToKo(mine.r) : 9, hThem = theirs ? Calc.hitsToKo(theirs.r) : 9;
       const faster = Calc.speed(m) > Calc.speed(x.mon);
       const myTurns = hMe - (faster ? 0.5 : 0), theirTurns = hThem - (faster ? 0 : 0.5);
       return Math.max(-1, Math.min(1, (theirTurns - myTurns) / 2));
-    }));
-    // best 4 of the team: maximise sum over their mons of the best answer + small average term
+    });
+    const score = list.map(vsRow);
+    // Only one Pokémon can Mega Evolve per battle: a Mega that doesn't get to evolve fights as its base form
+    // (still holding the stone). Score those base forms too.
+    const sets = filled();
+    const isMega = list.map(m => !!m.s.ri);
+    const baseScore = list.map((m, i) => {
+      if (!isMega[i]) return score[i];
+      const b = D.species[toId(m.s.base)];
+      const set = sets[i];
+      return vsRow(Calc.mon({ ...set, species: b.n, ability: set.baseAbility || b.ab[0] }));
+    });
+    // best 4 of the team: maximise sum over their mons of the best answer + small average term; with 2+ Megas in
+    // the four, try each one as THE Mega and the others as base forms
+    const evalCombo = (c, rows) => opp.reduce((s, _, j) => s + Math.max(...c.map(i => rows(i)[j])), 0) + 0.25 * c.reduce((s, i) => s + rows(i).reduce((a, b) => a + b, 0) / opp.length, 0);
     let best = null;
     const idx = list.map((_, i) => i);
     const combos = k => { const out = []; const rec = (s, a) => { if (a.length === k) { out.push(a); return; } for (let i = s; i < idx.length; i++) rec(i + 1, [...a, i]); }; rec(0, []); return out; };
     for (const c of combos(Math.min(4, list.length))) {
-      const val = opp.reduce((s, _, j) => s + Math.max(...c.map(i => score[i][j])), 0) + 0.25 * c.reduce((s, i) => s + score[i].reduce((a, b) => a + b, 0) / opp.length, 0);
-      if (!best || val > best.val) best = { c, val };
+      const megas = c.filter(i => isMega[i]);
+      const choices = megas.length ? megas : [-1];
+      for (const mega of choices) {
+        const val = evalCombo(c, i => (isMega[i] && i !== mega ? baseScore[i] : score[i]));
+        if (!best || val > best.val) best = { c, val, mega };
+      }
     }
     const cell = x => `<td class="${x > 0.25 ? 'm05' : x < -0.25 ? 'm2' : ''}">${x > 0 ? '+' : ''}${x.toFixed(1)}</td>`;
-    $('#bringOut').innerHTML = `<div class="card"><h3>Suggested four: ${best.c.map(i => esc(list[i].s.n)).join(', ')}</h3>
+    const extraMegas = best.c.filter(i => isMega[i] && i !== best.mega);
+    const megaNote = extraMegas.length ? `<div class="warn">Only one Pokémon can Mega Evolve per battle: Mega Evolve <b>${esc(list[best.mega].s.n)}</b>;
+      ${extraMegas.map(i => esc(D.species[toId(list[i].s.base)].n)).join(', ')} still ${extraMegas.length > 1 ? 'pull' : 'pulls'} its weight as the base form (scored that way).</div>` : '';
+    $('#bringOut').innerHTML = `<div class="card"><h3>Suggested four: ${best.c.map(i => esc(isMega[i] && i !== best.mega ? D.species[toId(list[i].s.base)].n : list[i].s.n)).join(', ')}</h3>${megaNote}
       <div class="muted">Positive = your Pokémon wins that 1-on-1 (KOs first / in fewer hits). A quick guide, not a full game plan.</div></div>
       <div class="scroll"><table><tr><th class="name">You \\ Them</th>${opp.map(x => `<th>${esc(x.name)}</th>`).join('')}</tr>
       ${list.map((m, i) => `<tr class="${best.c.includes(i) ? 'you' : ''}"><td class="name">${esc(m.s.n)}</td>${score[i].map(cell).join('')}</tr>`).join('')}</table></div>`;
