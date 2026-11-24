@@ -655,7 +655,7 @@
     const metaNames = meta().map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
     v.innerHTML = `<p class="muted">Pick goals; the finder looks for the spread (and nature) that meets all of them with the fewest Stat Points,
       then puts the rest into its attacking stat and HP/defenses. Attackers use their most common meta set. Suggested goals come in priority
-      order: outspeed threats first (unless the team plays it under Trick Room), then OHKOs, then bulk.</p>
+      order: outspeed threats first (unless the team plays it under Trick Room), then OHKOs (up to 6, with the moves in its slot), then bulk.</p>
       <div class="controls"><label>Pokémon <select id="sfSlot">${sets.map((s, i) => `<option value="${i}" ${i === spreadState.slot ? 'selected' : ''}>${esc(s.species)}</option>`).join('')}</select></label>
         <label>Speed plan <select id="sfPlan"><option value="auto">Auto: ${esc(teamPlan().label)}</option><option value="fast">Outspeed (Tailwind / fast)</option><option value="tr">Trick Room (min Speed)</option></select></label>
         <button id="sfSuggest">Suggest goals from the meta</button><button id="sfAdd">+ Add goal</button></div>
@@ -776,22 +776,29 @@
   /**
    * Goals in priority order (the finder keeps them in this order while they still fit in 66 SP):
    *  1. outspeed the fastest common threat it can reach with max Speed (skipped on a Trick Room team),
-   *  2. OHKO the most-used Pokémon it can OHKO with full investment,
+   *  2. OHKO the (up to 6) most-used Pokémon it can OHKO with full investment, using only the moves in its slot,
    *  3. survive the common hits that nearly KO it.
    */
   /**
-   * Is the TEAM built around Trick Room? Needs a Trick Room setter plus at least two slow attackers (base Spe <= 60)
-   * besides the setter. A team with Tailwind too is Tailroom: there, only its slow members play under Trick Room.
-   * A Trick Room user on an otherwise fast team (e.g. Farigiraf for reverse TR) doesn't make it a TR team.
+   * Is the TEAM built around Trick Room? Judged from the team, not from base Speed alone (a base-100 Gardevoir or a
+   * base-80 attacker can be a Trick Room attacker): a member "plays under Trick Room" when its spread says so
+   * (-Spe nature, or 0 Speed SP without a +Spe nature) or it is very slow (base Spe <= 50). With a Trick Room setter and
+   * at least two such members besides the setter it's a TR team; if the team also has Tailwind it's Tailroom, where
+   * only those members play under Trick Room. A lone Trick Room user on a fast team (reverse TR) isn't a TR team.
    */
+  function trMember(m) {
+    const n = Calc.NATURES[m.nature] || [];
+    return n[1] === 5 || (m.sp[5] === 0 && n[0] !== 5 && m.item !== 'choicescarf') || m.s.bs[5] <= 50;
+  }
   function teamPlan() {
     const ms = mons();
     const setters = ms.filter(m => m.moves.includes('trickroom'));
     const tw = ms.some(m => m.moves.includes('tailwind'));
-    const slow = ms.filter(m => m.s.bs[5] <= 60 && !(setters.length === 1 && setters[0] === m));
+    const slow = ms.filter(m => trMember(m) && !(setters.length === 1 && setters[0] === m));
     if (setters.length && slow.length >= 2) {
-      return tw ? { mode: 'tailroom', label: `Tailroom: slow members play Trick Room (${setters.map(m => m.s.n).join(', ')} sets it), the rest outspeed`, slow }
-                : { mode: 'tr', label: `Trick Room team (${setters.map(m => m.s.n).join(', ')} sets it; ${slow.length} slow attackers)`, slow };
+      const who = slow.map(m => m.s.n).join(', ');
+      return tw ? { mode: 'tailroom', label: `Tailroom: ${who} play Trick Room, the rest outspeed`, slow }
+                : { mode: 'tr', label: `Trick Room team (${setters.map(m => m.s.n).join(', ')} sets it; ${who} built for it)`, slow };
     }
     return { mode: 'fast', label: setters.length ? 'speed team (Trick Room here is a counter, not the plan)' : 'speed team', slow };
   }
@@ -824,14 +831,14 @@
       const sp = set.sp.slice(); sp[mainAtk] = 32;
       const strong = Calc.mon({ ...set, nature, sp });
       for (const x of ms) {
-        if (goals.filter(g => g.kind === 'ko').length >= 2) break;
+        if (goals.filter(g => g.kind === 'ko').length >= 6) break;
         const b = bestHit(strong, x.mon, field);
         if (b && b.r.lo >= 1) goals.push({ kind: 'ko', who: x.id, move: b.mid, hits: 1 });
       }
     }
     // 3. bulk: common hits that come close to KOing it
     for (const row of matchup(m, field).rows.filter(r => !self.includes(r.x.id)).sort((a, b) => b.x.usage - a.x.usage)) {
-      if (goals.filter(g => g.kind === 'survive').length >= 2) break;
+      if (goals.filter(g => g.kind === 'survive').length >= 3) break;
       if (row.theirs && row.theirs.r.hi >= 0.85 && row.theirs.r.lo < 1.3) goals.push({ kind: 'survive', who: row.x.id, move: row.theirs.mid, hits: 1 });
     }
     return goals;
