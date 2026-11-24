@@ -294,6 +294,9 @@
     });
     return metaCache;
   }
+  /** Speed of a meta Pokémon without a Scarf, and with one. Its common set may already hold the Scarf. */
+  const plainSpeed = x => Calc.speed({ ...x.mon, item: x.mon.item === 'choicescarf' ? '' : x.mon.item });
+  const scarfSpeed = x => Math.floor(plainSpeed(x) * 1.5);
   const isAttack = mid => D.moves[mid] && D.moves[mid].c !== 2 && (D.moves[mid].bp > 0 || ['seismictoss', 'nightshade', 'superfang', 'lowkick', 'grassknot', 'heavyslam', 'heatcrash'].includes(mid));
   /** Best attack of a against d: {mid, r (range), hits} */
   function bestHit(a, d, f, moveFilter) {
@@ -320,7 +323,7 @@
       const mine = bestHit(m, x.mon, f);
       // their moves: only ones at least 15% of them run
       const theirs = bestHit(x.mon, m, f, mid => (x.moveUse[mid] || 0) >= 0.15);
-      const sMe = Calc.speed(m, f), sThem = Calc.speed(x.mon, {}) * (x.scarf ? 1.5 : 1);
+      const sMe = Calc.speed(m, f), sThem = Calc.speed(x.mon, {});
       return { x, mine, theirs, ohko: mine ? koChance(mine.r, 1) : 0, twohko: mine ? koChance(mine.r, 2) : 0,
         ohkoBack: theirs ? koChance(theirs.r, 1) : 0, twohkoBack: theirs ? koChance(theirs.r, 2) : 0,
         faster: sMe > sThem ? 1 : sMe === sThem ? 0.5 : 0, sMe, sThem: Math.floor(sThem) };
@@ -466,7 +469,7 @@
         t += `<tr><td class="name">${esc(row.x.name)}</td><td>${pct(row.x.usage)}</td>
           <td>${row.mine ? esc(D.moves[row.mine.mid].n) : '—'}</td><td class="${row.mine && row.mine.r.lo >= 1 ? 'good' : ''}">${d(row.mine)}</td>
           <td>${row.theirs ? esc(D.moves[row.theirs.mid].n) : '—'}</td><td class="${cls(row.theirs)}">${d(row.theirs)}</td>
-          <td class="${row.faster === 1 ? 'good' : row.faster === 0 ? 'bad' : 'warn'}">${row.sMe} / ${row.sThem}${row.x.scarf ? ' (Scarf)' : ''}</td></tr>`;
+          <td class="${row.faster === 1 ? 'good' : row.faster === 0 ? 'bad' : 'warn'}">${row.sMe} / ${row.sThem}${row.x.mon.item === 'choicescarf' ? ' (Scarf)' : ''}</td></tr>`;
       }
       det.append(h(t + '</table></div>'));
       v.append(det);
@@ -475,8 +478,11 @@
 
   function viewSpeed(v, list) {
     const opts = viewSpeed.opts || (viewSpeed.opts = { tw: false, n: 40 });
-    const entries = meta(opts.n).map(x => ({ name: x.name, s: Calc.speed(x.mon), note: `${x.set.nature} ${x.set.sp[5]} SP`, usage: x.usage, you: false, scarf: x.scarf }));
-    meta(opts.n).filter(x => x.scarf).forEach(x => entries.push({ name: x.name + ' (Scarf)', s: Math.floor(Calc.speed(x.mon) * 1.5), note: '', usage: x.usage * (D.usage[x.id].it.choicescarf || 0) }));
+    const spread = x => `${x.set.nature} ${x.set.sp[5]} SP`;
+    const scarfShare = x => D.usage[x.id].it.choicescarf || 0;
+    // every meta Pokémon without a Scarf, plus a Scarf line for the ones that often run it (usage = share running it)
+    const entries = meta(opts.n).map(x => ({ name: x.name, s: plainSpeed(x), note: spread(x), usage: x.usage * (1 - scarfShare(x)), you: false }));
+    meta(opts.n).filter(x => x.scarf).forEach(x => entries.push({ name: x.name + ' (Scarf)', s: scarfSpeed(x), note: spread(x) + ', Choice Scarf', usage: x.usage * scarfShare(x) }));
     for (const m of list) entries.push({ name: m.s.n, s: Calc.speed(m, { tailwind: opts.tw }), note: `${m.nature} ${m.sp[5]} SP${m.boosts[5] ? `, ${m.boosts[5] > 0 ? '+' : ''}${m.boosts[5]} Spe` : ''}${opts.tw ? ', Tailwind' : ''}${m.item === 'choicescarf' ? ', Scarf' : ''}`, you: true });
     entries.sort((a, b) => b.s - a.s);
     v.innerHTML = `<div class="controls"><label><input type="checkbox" id="spTw" ${opts.tw ? 'checked' : ''}> Your side has Tailwind</label>
@@ -574,7 +580,7 @@
     const me = Calc.mon({ ...set, sp, nature });
     const x = meta().find(m => m.id === g.who);
     if (!x) return true;
-    if (g.kind === 'outspeed') return Calc.speed(me) > Math.floor(Calc.speed(x.mon) * (g.scarf ? 1.5 : 1));
+    if (g.kind === 'outspeed') return Calc.speed(me) > (g.scarf ? scarfSpeed(x) : plainSpeed(x));
     if (g.kind === 'survive') {
       const b = g.move ? { r: Calc.range(x.mon, me, g.move, field) } : bestHit(x.mon, me, field, mid => (x.moveUse[mid] || 0) >= 0.15);
       return !b || b.r.hi * g.hits < 1;
@@ -677,7 +683,7 @@
     const score = list.map(m => opp.map(x => {
       const mine = bestHit(m, x.mon, {}), theirs = bestHit(x.mon, m, {}, mid => (x.moveUse[mid] || 0) >= 0.15 || !D.usage[x.id]);
       const hMe = mine ? Calc.hitsToKo(mine.r) : 9, hThem = theirs ? Calc.hitsToKo(theirs.r) : 9;
-      const faster = Calc.speed(m) > Calc.speed(x.mon) * (x.scarf ? 1.5 : 1);
+      const faster = Calc.speed(m) > Calc.speed(x.mon);
       const myTurns = hMe - (faster ? 0.5 : 0), theirTurns = hThem - (faster ? 0 : 0.5);
       return Math.max(-1, Math.min(1, (theirTurns - myTurns) / 2));
     }));
