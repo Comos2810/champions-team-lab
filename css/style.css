@@ -60,3 +60,8 @@ footer { padding: 16px; font-size: 12px; }
 .check { display: flex; gap: 6px; align-items: baseline; } .check .icon { width: 16px; }
 .goal { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--good); color: #fff; padding: 8px 14px; border-radius: 8px; }
+
+.slot .stages { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-bottom: 5px; font-size: 11px; }
+.slot .stages label { display: flex; flex-direction: column; align-items: center; color: var(--muted); }
+.slot .stages select { padding: 1px 2px; font-size: 12px; }
+.slot .stages select.on { border-color: var(--accent); color: #fff; background: #24476b; }
